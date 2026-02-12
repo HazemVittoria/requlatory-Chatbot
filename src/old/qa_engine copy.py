@@ -14,7 +14,7 @@ def answer(question: str):
     scope = r.scope
     anchor_terms = getattr(r, "anchor_terms", None) or []
 
-    chunks = search_chunks(question, scope=scope, anchor_terms=anchor_terms, intent=intent)
+    chunks = search_chunks(question, scope=scope, anchor_terms=anchor_terms)
 
     selected_passages = [c.get("text", "") for c in chunks]
     citations = [
@@ -71,6 +71,7 @@ def answer(question: str):
 
             # 1) Ensure narrative sentence starts on a new line after last bullet
             fallback = re.sub(r"(Qualification)\s+(The amount\b)", r"\1\n\n\2", fallback)
+
 
             break
 

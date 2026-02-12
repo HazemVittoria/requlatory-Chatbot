@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import logging
+logging.getLogger("pypdf").setLevel(logging.ERROR)
 from pathlib import Path
 from typing import List, Dict
 
@@ -15,18 +17,34 @@ def clean_text(s: str) -> str:
 def chunk_text(text: str, chunk_size: int = 900, overlap: int = 150) -> list[str]:
     if not text:
         return []
+
+    text = text.strip()
+    n = len(text)
     chunks: list[str] = []
     start = 0
-    n = len(text)
+
     while start < n:
         end = min(start + chunk_size, n)
+
+        # --- Move end backward to nearest space (avoid cutting words)
+        if end < n:
+            while end > start and not text[end - 1].isspace():
+                end -= 1
+
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
-        if end == n:
+
+        if end >= n:
             break
+
+        # --- Overlap: move start backward but align to space
         start = max(0, end - overlap)
+        while start < n and not text[start].isspace():
+            start += 1
+
     return chunks
+
 
 
 def is_low_value(text: str) -> bool:

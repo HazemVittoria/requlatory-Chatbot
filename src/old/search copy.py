@@ -1,11 +1,34 @@
+# src/search.py
 from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+from .ingestion import build_corpus
+
+_CORPUS: list[dict[str, Any]] | None = None
+_VECTORIZER: TfidfVectorizer | None = None
+_X = None
+
+
+def _rebuild_index() -> None:
+    global _CORPUS, _VECTORIZER, _X
+    _CORPUS = build_corpus(Path("data"))
+    texts = [(c.get("text") or "") for c in _CORPUS]
+    _VECTORIZER = TfidfVectorizer(stop_words="english")
+    _X = _VECTORIZER.fit_transform(texts)
+
+
+def _ensure_index() -> None:
+    if _CORPUS is None or _VECTORIZER is None or _X is None:
+        _rebuild_index()
+
 
 def expand_query(query: str) -> str:
-    q = query.strip()
+    q = (query or "").strip()
     ql = q.lower()
     extras: list[str] = []
     if "batch" in ql and ("analyses" in ql or "analysis" in ql):
@@ -17,17 +40,36 @@ def expand_query(query: str) -> str:
             "COA",
             "certificate of analysis",
         ]
-    return q + " " + " ".join(extras)
+    return (q + " " + " ".join(extras)).strip()
 
 
-def search(corpus: list[dict], query: str, top_k: int = 30) -> list[tuple[float, dict]]:
-    texts = [c["text"] for c in corpus]
-    vectorizer = TfidfVectorizer(stop_words="english")
-    X = vectorizer.fit_transform(texts)
+def search_chunks(
+    query: str,
+    scope: str = "MIXED",
+    top_k: int = 5,
+    anchor_terms: list[str] | None = None,
+) -> list[dict]:
+    _ensure_index()
+    assert _CORPUS is not None and _VECTORIZER is not None and _X is not None
 
-    q2 = expand_query(query)
-    qv = vectorizer.transform([q2])
-    sims = cosine_similarity(qv, X).flatten()
+    anchor_terms = anchor_terms or []
+    q_aug = query + (" " + " ".join(anchor_terms) if anchor_terms else "")
 
-    idx = sims.argsort()[::-1][:top_k]
-    return [(float(sims[i]), corpus[i]) for i in idx]
+    q2 = expand_query(q_aug)
+    qv = _VECTORIZER.transform([q2])
+    sims = cosine_similarity(qv, _X).flatten()
+
+    idx_all = sims.argsort()[::-1]
+
+    out: list[dict] = []
+    for i in idx_all:
+        c = _CORPUS[int(i)]
+        src = c.get("source") or c.get("scope")  # tolerate either key
+        if scope != "MIXED" and src != scope:
+            continue
+        out.append(c)
+        if len(out) >= top_k:
+            break
+
+    return out
+
