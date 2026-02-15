@@ -43,6 +43,14 @@ _SPECIFIC_TERMS = {
     "part",
     "supplier",
     "qualification",
+    "qualify",
+    "qualified",
+    "requalification",
+    "equipment",
+    "device",
+    "instrument",
+    "calibration",
+    "analytical",
     "training",
     "risk",
     "alcoa",
@@ -82,6 +90,119 @@ def _retrieval_confidence(scores: list[float]) -> float:
 
 def _tokenize(s: str) -> set[str]:
     return {w for w in _TOKEN_RE.findall((s or "").lower()) if w not in _STOP}
+
+
+def _ordered_keywords(s: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in _TOKEN_RE.findall((s or "").lower()):
+        if raw in _STOP:
+            continue
+        if raw in seen:
+            continue
+        seen.add(raw)
+        out.append(raw)
+    return out
+
+
+def _focus_phrase(question: str, anchor_terms: list[str]) -> str:
+    anchors = [(a or "").strip() for a in (anchor_terms or []) if (a or "").strip()]
+    if anchors:
+        return " and ".join(anchors[:2])
+    kws = _ordered_keywords(question)
+    if kws:
+        return " ".join(kws[:4])
+    return "the topic"
+
+
+def _contains_any(tokens: set[str], words: set[str]) -> bool:
+    return any(w in tokens for w in words)
+
+
+def _suggest_rephrases(question: str, anchor_terms: list[str]) -> list[str]:
+    focus = _focus_phrase(question, anchor_terms)
+    toks = _tokenize(question)
+
+    equipment_terms = {"device", "equipment", "instrument", "testing", "test", "qualify", "qualification", "analyte"}
+    computer_terms = {"computerized", "computerised", "software", "system", "csv", "annex", "part"}
+    training_terms = {"training", "staff", "personnel", "competence", "qualification"}
+    risk_terms = {"risk", "hazard", "control", "review"}
+
+    if _contains_any(toks, equipment_terms):
+        return [
+            "How should GMP laboratory equipment be qualified using IQ/OQ/PQ?",
+            "What documentation is required for installation qualification (IQ), operational qualification (OQ), and performance qualification (PQ) of analytical test instruments?",
+            "What acceptance criteria, calibration, and periodic requalification records are expected for testing equipment under GMP?",
+        ]
+
+    if _contains_any(toks, computer_terms):
+        return [
+            "How should a computerized system be validated under Annex 11 and Part 11 expectations?",
+            "What CSV lifecycle documentation is required (URS, risk assessment, testing, and traceability)?",
+            "What evidence demonstrates a computerized system remains in a validated state after changes?",
+        ]
+
+    if _contains_any(toks, training_terms):
+        return [
+            "What documentation is required for personnel training and qualification under GMP/GxP?",
+            "What records should be maintained to demonstrate staff competence and ongoing training effectiveness?",
+            "What evidence is expected for contractor and temporary staff training qualification?",
+        ]
+
+    if _contains_any(toks, risk_terms):
+        return [
+            "How should quality risk management be performed under ICH Q9?",
+            "What records are required for risk assessment, risk control, and risk review decisions?",
+            "How should risk acceptance criteria and mitigation effectiveness be documented?",
+        ]
+
+    return [
+        f"What GMP/GxP requirement applies to {focus} in ICH/FDA/EMA guidance?",
+        f"What documentation and evidence are required for {focus}?",
+        f"What acceptance criteria, decision rules, and records should be defined for {focus}?",
+    ]
+
+
+def _insufficient_response(
+    *,
+    question: str,
+    intent: str,
+    scope: str,
+    citations: list[Citation],
+    retrieval_conf: float,
+    sentence_conf: float,
+    domain_conf: float,
+    overall_conf: float,
+    threshold: float,
+    anchor_terms: list[str],
+) -> AnswerResult:
+    suggestions = _suggest_rephrases(question, anchor_terms)
+    msg = (
+        "Insufficient evidence in the provided regulatory files to answer this question reliably. "
+        "Please rephrase with specific terms or scope."
+    )
+    msg += "\n\nTry one of these rephrasings:\n"
+    msg += "\n".join([f"- {s}" for s in suggestions])
+    return AnswerResult(
+        text=msg,
+        intent=intent,  # type: ignore[arg-type]
+        scope=scope,  # type: ignore[arg-type]
+        citations=citations[:3],
+        used_chunks=[
+            {
+                "kind": "confidence",
+                "retrieval_confidence": round(retrieval_conf, 4),
+                "sentence_confidence": round(sentence_conf, 4),
+                "domain_relevance": round(domain_conf, 4),
+                "overall_confidence": round(overall_conf, 4),
+                "threshold": round(threshold, 4),
+            },
+            {
+                "kind": "suggestions",
+                "items": suggestions,
+            },
+        ],
+    )
 
 
 def _question_domain_score(question: str) -> float:
@@ -175,22 +296,17 @@ def answer(question: str):
     if domain_conf < 0.12:
         retrieval_conf = _retrieval_confidence(retrieval_scores)
         overall_conf = (0.55 * retrieval_conf) + (0.45 * domain_conf)
-        return AnswerResult(
-            text=(
-                "Insufficient evidence in the provided regulatory files to answer this question reliably. "
-                "Please rephrase with specific terms or scope."
-            ),
+        return _insufficient_response(
+            question=question,
             intent=intent,
             scope=scope,
             citations=citations[:3],
-            used_chunks=[{
-                "kind": "confidence",
-                "retrieval_confidence": round(retrieval_conf, 4),
-                "sentence_confidence": 0.0,
-                "domain_relevance": round(domain_conf, 4),
-                "overall_confidence": round(overall_conf, 4),
-                "threshold": round(_confidence_threshold(), 4),
-            }],
+            retrieval_conf=retrieval_conf,
+            sentence_conf=0.0,
+            domain_conf=domain_conf,
+            overall_conf=overall_conf,
+            threshold=_confidence_threshold(),
+            anchor_terms=anchor_terms,
         )
 
     res = render_answer(
@@ -274,11 +390,18 @@ def answer(question: str):
     used.append(conf_meta)
 
     if not chunks or domain_conf < 0.14 or overall_conf < _confidence_threshold():
-        msg = (
-            "Insufficient evidence in the provided regulatory files to answer this question reliably. "
-            "Please rephrase with specific terms or scope."
+        res = _insufficient_response(
+            question=question,
+            intent=intent,
+            scope=scope,
+            citations=citations[:3],
+            retrieval_conf=retrieval_conf,
+            sentence_conf=sentence_conf,
+            domain_conf=domain_conf,
+            overall_conf=overall_conf,
+            threshold=_confidence_threshold(),
+            anchor_terms=anchor_terms,
         )
-        res = replace(res, text=msg, citations=citations[:3], used_chunks=used)
     else:
         res = replace(res, used_chunks=used)
 

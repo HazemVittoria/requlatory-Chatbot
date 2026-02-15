@@ -196,6 +196,23 @@ def expand_query(query: str) -> str:
             "COA",
             "certificate of analysis",
         ]
+
+    if (
+        any(k in ql for k in ("qualify", "qualification", "qualified", "requalification"))
+        and any(k in ql for k in ("device", "equipment", "instrument", "testing"))
+    ):
+        extras += [
+            "equipment qualification",
+            "laboratory equipment qualification",
+            "analytical instrument qualification",
+            "IQ OQ PQ",
+            "installation qualification",
+            "operational qualification",
+            "performance qualification",
+            "calibration",
+            "periodic requalification",
+            "acceptance criteria",
+        ]
     return (q + " " + " ".join(extras)).strip()
 
 

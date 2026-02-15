@@ -144,6 +144,8 @@ def extract_anchor_terms(q: str, intent: Intent) -> list[str]:
         add("training")
     if "qualification" in ql:
         add("qualification")
+    if re.search(r"\b(qualify|qualified|requalification)\b", ql):
+        add("qualification")
     if "process validation" in ql:
         add("process validation")
     if re.search(r"\bvalidat(e|ion|ed|ing)?\b", ql):
@@ -166,3 +168,8 @@ def route(question: str) -> Route:
     scope = detect_scope(question)
     anchors = extract_anchor_terms(question, intent)
     return Route(intent=intent, scope=scope, anchor_terms=anchors)
+    # Equipment/device qualification questions should be treated as procedure requirements.
+    has_device_terms = bool(re.search(r"\b(device|equipment|instrument|testing device|test instrument)\b", qn))
+    has_qual_terms = bool(re.search(r"\b(qualify|qualified|qualification|requalification|iq|oq|pq)\b", qn))
+    if has_device_terms and has_qual_terms:
+        return "procedure_requirements"
