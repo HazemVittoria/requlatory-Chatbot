@@ -4,46 +4,139 @@ import re
 import logging
 logging.getLogger("pypdf").setLevel(logging.ERROR)
 from pathlib import Path
-from typing import List, Dict
+from collections import Counter
 
 from pypdf import PdfReader
 
 
-def clean_text(s: str) -> str:
-    s = (s or "").replace("\u00a0", " ")
-    return " ".join(s.split()).strip()
+_WS_RE = re.compile(r"\s+")
+_PAGE_RE = re.compile(r"\bpage\s+\d+\s+of\s+\d+\b", flags=re.IGNORECASE)
+_PAGE_NUM_RE = re.compile(r"^\s*(?:page\s+)?\d+\s*(?:/\s*\d+)?\s*$", flags=re.IGNORECASE)
+_HEADING_RE = re.compile(r"^\d+(?:\.\d+)*\s+[A-Z][A-Za-z0-9 \-(),/&]{2,}$")
+_LIST_ROW_RE = re.compile(r"^\s*(?:[-*]|[a-zA-Z]\)|\d+[.)])\s+")
+_TABLE_RE = re.compile(r"^\s*table\s+\d+[A-Za-z]?(?:[:.\-]\s*|\s+).*$", flags=re.IGNORECASE)
 
 
-def chunk_text(text: str, chunk_size: int = 900, overlap: int = 150) -> list[str]:
+def _normalize_line(line: str) -> str:
+    s = (line or "").replace("\u00a0", " ").replace("\uf0b7", " ")
+    s = re.sub(r"[\t\r]", " ", s)
+    return _WS_RE.sub(" ", s).strip()
+
+
+def _normalize_for_count(line: str) -> str:
+    s = _normalize_line(line).lower()
+    if not s:
+        return ""
+    s = _PAGE_RE.sub(" ", s)
+    s = re.sub(r"\b\d+\b", "#", s)
+    return _WS_RE.sub(" ", s).strip()
+
+
+def _looks_like_artifact_line(line: str) -> bool:
+    s = line.strip()
+    sl = s.lower()
+    if not s:
+        return True
+    if _PAGE_NUM_RE.match(s):
+        return True
+    if _PAGE_RE.search(sl):
+        return True
+    if "table of contents" in sl:
+        return True
+    if set(s) <= {".", "-", "_"} and len(s) >= 6:
+        return True
+    if re.match(r"^\d+(\.\d+)*\s*$", s):
+        return True
+    return False
+
+
+def _is_table_or_list_paragraph(text: str) -> bool:
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return True
+    joined = " ".join(lines).lower()
+    if "inspector" in joined and "aide memoir" in joined:
+        return True
+    if any(_TABLE_RE.match(ln) for ln in lines):
+        return True
+    if re.search(r"\b(histogram|pareto|process capability)\b", joined):
+        return True
+    if len(lines) >= 3:
+        list_like = sum(1 for ln in lines if _LIST_ROW_RE.match(ln) or re.search(r"\s{3,}", ln))
+        if list_like / len(lines) >= 0.6:
+            return True
+    return False
+
+
+def _paragraphs_from_lines(lines: list[str]) -> list[str]:
+    paragraphs: list[str] = []
+    current: list[str] = []
+
+    def flush() -> None:
+        if not current:
+            return
+        text = " ".join(current).strip()
+        text = _WS_RE.sub(" ", text)
+        if text:
+            paragraphs.append(text)
+        current.clear()
+
+    for raw in lines:
+        line = _normalize_line(raw)
+        if not line or _looks_like_artifact_line(line):
+            flush()
+            continue
+
+        # Keep section headings as their own paragraph boundary.
+        if _HEADING_RE.match(line):
+            flush()
+            paragraphs.append(line)
+            continue
+
+        if _LIST_ROW_RE.match(line):
+            flush()
+            paragraphs.append(line)
+            continue
+
+        if current:
+            prev = current[-1]
+            if prev.endswith((".", "!", "?", ":", ";")):
+                flush()
+        current.append(line)
+
+    flush()
+    return paragraphs
+
+
+def _clean_chunk_text(text: str) -> str:
+    if not text:
+        return ""
+    s = _WS_RE.sub(" ", text.replace("\u00a0", " ")).strip()
+    return s
+
+
+
+def chunk_text(text: str, chunk_size: int = 900) -> list[str]:
     if not text:
         return []
 
-    text = text.strip()
-    n = len(text)
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     chunks: list[str] = []
-    start = 0
+    current = ""
 
-    while start < n:
-        end = min(start + chunk_size, n)
+    for p in paragraphs:
+        if len(current) + len(p) < chunk_size:
+            current += " " + p if current else p
+        else:
+            if current:
+                chunks.append(current.strip())
+            current = p
 
-        # --- Move end backward to nearest space (avoid cutting words)
-        if end < n:
-            while end > start and not text[end - 1].isspace():
-                end -= 1
-
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-
-        if end >= n:
-            break
-
-        # --- Overlap: move start backward but align to space
-        start = max(0, end - overlap)
-        while start < n and not text[start].isspace():
-            start += 1
+    if current:
+        chunks.append(current.strip())
 
     return chunks
+
 
 
 
@@ -51,6 +144,18 @@ def is_low_value(text: str) -> bool:
     if not text:
         return True
     t = text.lower()
+
+    # Drop table-heavy fragments
+    if re.search(r"\btable\s+\d+\b", t):
+        return True
+
+# Drop "Inspector’s Aide Memoir" table content
+    if "aide memoir" in t or ("inspector" in t and "memoir" in t):
+        return True
+
+# Drop Q9 annex/tool-list noise
+    if "histogram" in t or "pareto" in t or "process capability" in t:
+        return True
 
     if "table of contents" in t:
         return True
@@ -70,13 +175,35 @@ def ingest_folder(folder: Path, source: str) -> list[dict]:
 
     for pdf_path in folder.glob("*.pdf"):
         reader = PdfReader(str(pdf_path))
+        page_lines: list[tuple[int, list[str]]] = []
+        line_df: Counter[str] = Counter()
+
         for page_idx, page in enumerate(reader.pages, start=1):
-            page_text = clean_text(page.extract_text())
+            raw = page.extract_text() or ""
+            lines = [ln for ln in raw.splitlines() if _normalize_line(ln)]
+            page_lines.append((page_idx, lines))
+
+            seen_on_page = {_normalize_for_count(ln) for ln in lines}
+            seen_on_page.discard("")
+            line_df.update(seen_on_page)
+
+        min_df = max(2, int(len(page_lines) * 0.2 + 0.999))
+        repeated = {ln for ln, freq in line_df.items() if freq >= min_df}
+
+        for page_idx, lines in page_lines:
+            filtered_lines = [
+                ln
+                for ln in lines
+                if _normalize_for_count(ln) not in repeated and not _looks_like_artifact_line(ln)
+            ]
+            paragraphs = _paragraphs_from_lines(filtered_lines)
+            paragraphs = [p for p in paragraphs if not _is_table_or_list_paragraph(p)]
+            page_text = "\n\n".join(paragraphs)
             if not page_text:
                 continue
 
             for i, c in enumerate(chunk_text(page_text), start=1):
-                c = clean_text(c)
+                c = _clean_chunk_text(c)
                 if is_low_value(c):
                     continue
                 chunks.append(

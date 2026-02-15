@@ -31,16 +31,28 @@ def detect_scope(q: str) -> Scope:
 
 def detect_intent(q: str) -> Intent:
     qn = _normalize(q).lower()
+    has_computer_context = bool(
+        re.search(r"\b(computeri[sz]ed?|computerize[sd]?|computer system|computerized system|computerised system)\b", qn)
+        or "annex 11" in qn
+        or "part 11" in qn
+        or "csv" in qn
+    )
+    has_validation = bool(re.search(r"\b(validat(e|ion|ed|ing)?)\b", qn))
 
     # explicit computerized systems validation -> procedure_requirements
-    if (
-        ("computerized system" in qn or "computerised system" in qn or "annex 11" in qn)
-        and ("validate" in qn or "validation" in qn)
-    ):
+    if has_computer_context and has_validation:
         return "procedure_requirements"
 
     # CAPA effectiveness -> requirements_evidence
     if "capa" in qn and ("effectiveness" in qn or "evidence" in qn):
+        return "requirements_evidence"
+
+    # Paraphrases for documentation/records expectations -> requirements_evidence
+    has_doc_terms = bool(re.search(r"\b(record|records|document|documentation|evidence)\b", qn))
+    has_expectation_terms = bool(re.search(r"\b(expected|expect|required|requirement|requirements|needed|necessary|must|should)\b", qn))
+    if qn.startswith("what records") or qn.startswith("which records"):
+        return "requirements_evidence"
+    if has_doc_terms and has_expectation_terms and not qn.startswith("when "):
         return "requirements_evidence"
     
     if "what constitutes" in qn and ("how should" in qn or "how to" in qn or "ensure" in qn or "ensured" in qn):
@@ -124,12 +136,18 @@ def extract_anchor_terms(q: str, intent: Intent) -> list[str]:
 
     if "supplier" in ql:
         add("supplier")
+    if re.search(r"\b(computeri[sz]ed?|computerize[sd]?|computer system|computerized system|computerised system)\b", ql):
+        add("computerized systems")
+    if "annex 11" in ql or "part 11" in ql or "csv" in ql:
+        add("computerized systems")
     if "training" in ql:
         add("training")
     if "qualification" in ql:
         add("qualification")
     if "process validation" in ql:
         add("process validation")
+    if re.search(r"\bvalidat(e|ion|ed|ing)?\b", ql):
+        add("validation")
     if "change" in ql or "changes" in ql:
         add("change")
 
@@ -137,6 +155,8 @@ def extract_anchor_terms(q: str, intent: Intent) -> list[str]:
         add("CAPA")
     if "effectiveness" in ql:
         add("effectiveness")
+    if "risk" in ql or "risks" in ql or "risk management" in ql:
+        add("risk management")
 
     return terms
 

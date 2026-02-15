@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable
 
@@ -109,7 +110,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("question", help="Question text (wrap in quotes).")
     p.add_argument("--json", action="store_true", help="Emit JSON to stdout.")
     p.add_argument("--topk", type=int, default=None, help="Optional retrieval top-k if supported.")
+    p.add_argument("--rebuild-index", action="store_true", help="Force rebuild corpus/vector index before answering.")
     args = p.parse_args(argv)
+
+    if args.rebuild_index:
+        os.environ["REBUILD_INDEX"] = "1"
 
     engine_fn = _resolve_engine_callable()
 
