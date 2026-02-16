@@ -1,0 +1,194 @@
+{
+  "generated_at_utc": "2026-02-16T08:40:08.862211Z",
+  "report": {
+    "window_hours": 24,
+    "events_total_window": 11,
+    "events_total_all": 11,
+    "insufficient_count": 4,
+    "insufficient_rate": 0.3636,
+    "avg_latency_ms": 204.03,
+    "intent_counts": {
+      "procedure_requirements": 1,
+      "procedure": 3,
+      "unknown": 4,
+      "definition": 3
+    },
+    "low_confidence_count": 4,
+    "top_low_conf_tokens": [
+      {
+        "token": "many",
+        "count": 1
+      },
+      {
+        "token": "vacation",
+        "count": 1
+      },
+      {
+        "token": "days",
+        "count": 1
+      },
+      {
+        "token": "employees",
+        "count": 1
+      },
+      {
+        "token": "make",
+        "count": 1
+      },
+      {
+        "token": "inspection",
+        "count": 1
+      },
+      {
+        "token": "plan",
+        "count": 1
+      },
+      {
+        "token": "trend",
+        "count": 1
+      }
+    ],
+    "recent_failures": [
+      {
+        "ts_utc": "2026-02-15T19:31:55.765113Z",
+        "question_hash": "e45eb8acc64e",
+        "question_text": "How many vacation days do employees get?",
+        "intent": "procedure",
+        "confidence": {
+          "retrieval_confidence": 0.2673,
+          "sentence_confidence": 0.0,
+          "domain_relevance": 0.046,
+          "overall_confidence": 0.1677,
+          "threshold": 0.22
+        },
+        "citations": [
+          {
+            "doc_id": "annex11_01-2011_en.pdf",
+            "page": 2,
+            "chunk_id": "p2_c4"
+          },
+          {
+            "doc_id": "PI 011-3 Recommendation on Computerised Systems.pdf",
+            "page": 8,
+            "chunk_id": "p8_c5"
+          },
+          {
+            "doc_id": "Final GFI BIMO Processes and Practices -- 12-17-25.pdf",
+            "page": 16,
+            "chunk_id": "p16_c1"
+          }
+        ],
+        "suggestions": [
+          "What GMP/GxP requirement applies to many vacation days employees in ICH/FDA/EMA guidance?",
+          "What documentation and evidence are required for many vacation days employees?",
+          "What acceptance criteria, decision rules, and records should be defined for many vacation days employees?"
+        ]
+      },
+      {
+        "ts_utc": "2026-02-16T08:36:00.359677Z",
+        "question_hash": "55c8920c955b",
+        "question_text": "make an inspection plan",
+        "intent": "unknown",
+        "confidence": {
+          "retrieval_confidence": 0.1937,
+          "sentence_confidence": 0.0,
+          "domain_relevance": 0.3292,
+          "overall_confidence": 0.1791,
+          "threshold": 0.22
+        },
+        "citations": [
+          {
+            "doc_id": "Final GFI BIMO Processes and Practices -- 12-17-25.pdf",
+            "page": 11,
+            "chunk_id": "p11_c1"
+          },
+          {
+            "doc_id": "PI 011-3 Recommendation on Computerised Systems.pdf",
+            "page": 39,
+            "chunk_id": "p39_c1"
+          },
+          {
+            "doc_id": "Final GFI BIMO Processes and Practices -- 12-17-25.pdf",
+            "page": 14,
+            "chunk_id": "p14_c1"
+          }
+        ],
+        "suggestions": [
+          "What GMP/GxP requirement applies to make inspection plan in ICH/FDA/EMA guidance?",
+          "What documentation and evidence are required for make inspection plan?",
+          "What acceptance criteria, decision rules, and records should be defined for make inspection plan?"
+        ]
+      },
+      {
+        "ts_utc": "2026-02-16T08:36:41.159219Z",
+        "question_hash": "42acc00dc6b7",
+        "question_text": "what is OOS",
+        "intent": "definition",
+        "confidence": {
+          "retrieval_confidence": 0.3192,
+          "sentence_confidence": 0.0,
+          "domain_relevance": 0.1742,
+          "overall_confidence": 0.2031,
+          "threshold": 0.22
+        },
+        "citations": [
+          {
+            "doc_id": "Q10.pdf",
+            "page": 13,
+            "chunk_id": "p13_c2"
+          },
+          {
+            "doc_id": "MHRA_GxP_data_integrity_guide_March_edited_Final.pdf",
+            "page": 14,
+            "chunk_id": "p14_c3"
+          },
+          {
+            "doc_id": "DRUG QUALITY SAMPLING AND TESTING (DQST)- HUMAN DRUGS_7356.008.pdf",
+            "page": 10,
+            "chunk_id": "p10_c2"
+          }
+        ],
+        "suggestions": [
+          "What GMP/GxP requirement applies to OOS and investigation in ICH/FDA/EMA guidance?",
+          "What documentation and evidence are required for OOS and investigation?",
+          "What acceptance criteria, decision rules, and records should be defined for OOS and investigation?"
+        ]
+      },
+      {
+        "ts_utc": "2026-02-16T08:37:03.771796Z",
+        "question_hash": "edf7994a91cf",
+        "question_text": "what is out of trend",
+        "intent": "definition",
+        "confidence": {
+          "retrieval_confidence": 0.1719,
+          "sentence_confidence": 0.0,
+          "domain_relevance": 0.115,
+          "overall_confidence": 0.1463,
+          "threshold": 0.22
+        },
+        "citations": [
+          {
+            "doc_id": "Part-11--Electronic-Records--Electronic-Signatures---Scope-and-Application-(PDF).pdf",
+            "page": 11,
+            "chunk_id": "p11_c1"
+          },
+          {
+            "doc_id": "Q9.pdf",
+            "page": 5,
+            "chunk_id": "p5_c2"
+          },
+          {
+            "doc_id": "MHRA_GxP_data_integrity_guide_March_edited_Final.pdf",
+            "page": 12,
+            "chunk_id": "p12_c2"
+          }
+        ],
+        "suggestions": [
+          "What GMP/GxP requirement applies to out of trend in ICH/FDA/EMA guidance?",
+          "What documentation and evidence are required for out of trend?",
+          "What acceptance criteria, decision rules, and records should be defined for out of trend?"
+        ]
+      }
+    ]
+  }
+}
