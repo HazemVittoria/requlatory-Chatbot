@@ -56,6 +56,23 @@ pytest -q tests/test_real_failures.py tests/test_golden.py tests/test_stress_eva
 
 Only keep fixes that pass all three.
 
+## Fast Path (Single Command)
+
+Run monitoring + retrieval metrics + stress eval + regression tests in one command:
+
+```powershell
+python -m src.daily_ops
+```
+
+This command writes:
+
+- `logs/reports/day_<YYYY-MM-DD>.json`
+- `metrics_base.json`
+- `metrics_semantic_compare.json`
+- `stress_sweep.json`
+- `logs/reports/daily_ops_<YYYY-MM-DD>.json`
+- `logs/reports/daily_ops_<YYYY-MM-DD>.md`
+
 ## 6) Retrieval Quality Check (2-3x/week)
 
 Baseline:
@@ -76,6 +93,18 @@ Review:
 - `summary.recall_at_k`
 - `delta`
 - `misses`
+
+Acceptance thresholds (compared with the latest committed baseline):
+
+- `summary.mrr` regression must be <= `0.01`
+- each of `summary.recall_at_k.1`, `.3`, `.5` regression must be <= `0.01`
+- semantic-on run (`variant_semantic_on`) must not regress `summary.mrr` or `recall_at_k.5` versus semantic-off
+
+Record in weekly notes:
+
+- baseline `mrr`, `recall_at_k`
+- semantic-on minus semantic-off deltas
+- active semantic backend (`lsa` or `embedding`) from answer telemetry `used_chunks -> retrieval_profile.semantic_backend`
 
 ## 7) Confidence Calibration (Mid-week)
 

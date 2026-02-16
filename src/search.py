@@ -17,7 +17,7 @@ from .ingestion import build_corpus
 from .metadata_schema import authority_from_source, authorities_for_scope
 from .rerank_features import RerankContext, apply_rerank_features, combine_hybrid_scores
 from .rerank_weights import get_rerank_weights
-from .semantic_reranker import LSASemanticReranker, SemanticRerankConfig
+from .semantic_reranker import build_semantic_reranker, SemanticRerankConfig
 
 _DEBUG = os.getenv("DEBUG_RETRIEVAL") == "1"
 _DEBUG_INDEX_CACHE = _DEBUG or (os.getenv("DEBUG_INDEX_CACHE", "0").strip().lower() in {"1", "true", "yes"})
@@ -43,21 +43,30 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_str(name: str, default: str) -> str:
+    raw = os.getenv(name, "").strip()
+    return raw if raw else default
+
+
 _ENABLE_SEMANTIC_RERANK = os.getenv("ENABLE_SEMANTIC_RERANK", "0").strip().lower() not in {"0", "false", "no"}
 _SEMANTIC_RERANK_WEIGHT = _env_float("SEMANTIC_RERANK_WEIGHT", 0.18)
 _SEMANTIC_RERANK_TOP_N = _env_int("SEMANTIC_RERANK_TOP_N", 30)
 
 _WORD_VECT_KW = {"stop_words": "english", "ngram_range": (1, 2), "min_df": 1}
 _CHAR_VECT_KW = {"analyzer": "char_wb", "ngram_range": (3, 5), "min_df": 1}
-_SEMANTIC_CONFIG = SemanticRerankConfig()
+_SEMANTIC_CONFIG = SemanticRerankConfig(
+    backend=_env_str("SEMANTIC_RERANK_BACKEND", "auto"),
+    embedding_model=_env_str("SEMANTIC_EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
+    embedding_batch_size=_env_int("SEMANTIC_EMBEDDING_BATCH_SIZE", 64),
+)
 
-_INDEX_CACHE_VERSION = "search-index-v2-metadata"
+_INDEX_CACHE_VERSION = "search-index-v3-architecture"
 _INDEX_CACHE_FILE = Path(".cache") / "retrieval_index.pkl"
 
 _CORPUS: list[dict[str, Any]] | None = None
 _VECTORIZER: TfidfVectorizer | None = None
 _VECTORIZER_CHAR: TfidfVectorizer | None = None
-_SEMANTIC_RERANKER: LSASemanticReranker | None = None
+_SEMANTIC_RERANKER = None
 _X = None
 _X_CHAR = None
 
@@ -168,7 +177,7 @@ def _rebuild_index(force: bool = False) -> None:
     _VECTORIZER_CHAR = TfidfVectorizer(**_CHAR_VECT_KW)
     _X = _VECTORIZER.fit_transform(texts)
     _X_CHAR = _VECTORIZER_CHAR.fit_transform(texts)
-    _SEMANTIC_RERANKER = LSASemanticReranker(_SEMANTIC_CONFIG)
+    _SEMANTIC_RERANKER = build_semantic_reranker(_SEMANTIC_CONFIG)
     _SEMANTIC_RERANKER.fit(texts)
     _save_index_cache(meta)
     if _DEBUG_INDEX_CACHE:
@@ -194,86 +203,42 @@ def resolve_authority_filter(scope: str, authority_filter: list[str] | None = No
 
 
 def infer_domain_boost(query: str, intent: str | None = None, anchor_terms: list[str] | None = None) -> dict[str, float]:
+    del intent  # keep function signature stable for callers
     q = f"{query or ''} {' '.join(anchor_terms or [])}".lower()
     out: dict[str, float] = {}
 
-    def add(domain: str, weight: float) -> None:
-        out[domain] = max(out.get(domain, 0.0), weight)
+    domain_signals: dict[str, tuple[str, ...]] = {
+        "DataIntegrity": ("data integrity", "part 11", "annex 11", "audit trail", "alcoa", "electronic signature"),
+        "Validation": ("validation", "validated", "iq", "oq", "pq"),
+        "QC_Lab": ("laboratory", "analytical", "oos", "oot", "out of specification", "out of trend"),
+        "Suppliers": ("supplier", "vendor", "contractor"),
+        "Inspection": ("inspection", "483", "inspectional", "audit"),
+        "Distribution": ("distribution", "transport", "storage", "cold chain"),
+        "PQS": ("deviation", "capa", "quality system", "risk management", "change control"),
+    }
 
-    if any(t in q for t in ("data integrity", "part 11", "annex 11", "audit trail", "alcoa", "electronic signature")):
-        add("DataIntegrity", 0.14)
-    if any(t in q for t in ("validation", "validated", "iq", "oq", "pq", "computerized", "computerised", "csv")):
-        add("Validation", 0.12)
-    if any(t in q for t in ("laboratory", "analytical", "oos", "oot", "out of specification", "out of trend")):
-        add("QC_Lab", 0.11)
-    if any(t in q for t in ("supplier", "vendor", "contractor")):
-        add("Suppliers", 0.12)
-    if any(t in q for t in ("inspection", "483", "inspectional", "audit")):
-        add("Inspection", 0.12)
-    if any(t in q for t in ("distribution", "transport", "storage", "cold chain")):
-        add("Distribution", 0.10)
-    if any(t in q for t in ("deviation", "capa", "quality system", "risk management", "change control")):
-        add("PQS", 0.10)
-    if intent and "procedure" in intent:
-        add("Inspection", max(out.get("Inspection", 0.0), 0.05))
+    for domain, signals in domain_signals.items():
+        hits = sum(1 for sig in signals if sig in q)
+        if hits <= 0:
+            continue
+        # Generic, monotonic scoring by signal density.
+        out[domain] = min(0.16, 0.06 + (0.02 * hits))
+
     return out
 
 
 def expand_query(query: str) -> str:
-    q = (query or "").strip()
-    ql = q.lower()
-    extras: list[str] = []
-    if "batch" in ql and ("analyses" in ql or "analysis" in ql):
-        extras += [
-            "batch analysis",
-            "analysis of batches",
-            "sampling and testing",
-            "test results",
-            "COA",
-            "certificate of analysis",
-        ]
+    # Phase B: keep retrieval deterministic and avoid question-specific query inflation.
+    return _WS_RE.sub(" ", (query or "")).strip()
 
-    if (
-        any(k in ql for k in ("qualify", "qualification", "qualified", "requalification"))
-        and any(k in ql for k in ("device", "equipment", "instrument", "testing"))
-    ):
-        extras += [
-            "equipment qualification",
-            "laboratory equipment qualification",
-            "analytical instrument qualification",
-            "IQ OQ PQ",
-            "installation qualification",
-            "operational qualification",
-            "performance qualification",
-            "calibration",
-            "periodic requalification",
-            "acceptance criteria",
-        ]
-    if "oos" in ql or "out of specification" in ql or "out-of-specification" in ql:
-        extras += [
-            "out of specification",
-            "oos investigation",
-            "laboratory investigation",
-            "root cause",
-            "corrective and preventive action",
-        ]
-    if "oot" in ql or "out of trend" in ql or "out-of-trend" in ql:
-        extras += [
-            "out of trend",
-            "oot investigation",
-            "trend analysis",
-            "laboratory investigation",
-            "root cause",
-        ]
-    if "inspection plan" in ql or "inspection planning" in ql:
-        extras += [
-            "inspection planning",
-            "inspection scope",
-            "inspection checklist",
-            "inspection schedule",
-            "inspection observations",
-        ]
-    return (q + " " + " ".join(extras)).strip()
+
+def semantic_backend_name() -> str:
+    if _SEMANTIC_RERANKER is None:
+        return "none"
+    name = getattr(_SEMANTIC_RERANKER, "backend_name", "")
+    if isinstance(name, str) and name.strip():
+        return name.strip().lower()
+    return type(_SEMANTIC_RERANKER).__name__
 
 
 def search_chunks(
@@ -329,7 +294,8 @@ def search_chunks(
         candidate_idx = boosted.argsort()[::-1][:top_n]
         sem_scores = _SEMANTIC_RERANKER.score_query(q2, candidate_idx)
         for j, ix in enumerate(candidate_idx):
-            boosted[int(ix)] += _SEMANTIC_RERANK_WEIGHT * float(sem_scores[j])
+            sem_delta = float(sem_scores[j]) - 0.5
+            boosted[int(ix)] += _SEMANTIC_RERANK_WEIGHT * sem_delta
 
     if _DEBUG:
         print("\n=== RETRIEVAL DEBUG ===")
@@ -342,7 +308,8 @@ def search_chunks(
         print(
             "Semantic rerank: "
             f"{'on' if _ENABLE_SEMANTIC_RERANK else 'off'} "
-            f"(top_n={_SEMANTIC_RERANK_TOP_N}, weight={_SEMANTIC_RERANK_WEIGHT})"
+            f"(backend={semantic_backend_name()}, "
+            f"top_n={_SEMANTIC_RERANK_TOP_N}, weight={_SEMANTIC_RERANK_WEIGHT})"
         )
 
     idx_all = boosted.argsort()[::-1]

@@ -48,6 +48,15 @@ def detect_intent(q: str) -> Intent:
     if "capa" in qn and ("effectiveness" in qn or "evidence" in qn):
         return "requirements_evidence"
 
+    if "inspectors" in qn or "inspection readiness" in qn:
+        return "examples_patterns"
+    if qn.startswith("what is") and "required steps" in qn:
+        return "procedure"
+    if qn.startswith("what is") and re.search(r"\band what .*acceptable\b", qn):
+        return "requirements_evidence"
+    if qn.startswith("what is") and ("how should" in qn or "how to" in qn):
+        return "mixed_definition_controls"
+
     # Paraphrases for documentation/records expectations -> requirements_evidence
     has_doc_terms = bool(re.search(r"\b(record|records|document|documentation|evidence)\b", qn))
     has_expectation_terms = bool(re.search(r"\b(expected|expect|required|requirement|requirements|needed|necessary|must|should)\b", qn))
@@ -55,7 +64,7 @@ def detect_intent(q: str) -> Intent:
         return "requirements_evidence"
     if has_doc_terms and has_expectation_terms and not qn.startswith("when "):
         return "requirements_evidence"
-    
+
     if "what constitutes" in qn and ("how should" in qn or "how to" in qn or "ensure" in qn or "ensured" in qn):
         return "mixed_definition_controls"
     if qn.startswith("what constitutes"):
@@ -88,7 +97,7 @@ def detect_intent(q: str) -> Intent:
 
     if qn.startswith("what constitutes"):
         return "mixed_definition_controls"
-    if qn.startswith("what is") and ("how should" in qn or "how to" in qn):
+    if qn.startswith("what is") and re.search(r"\band what (are|is)\b", qn):
         return "mixed_definition_controls"
 
 
@@ -115,7 +124,7 @@ def extract_anchor_terms(q: str, intent: Intent) -> list[str]:
         m = re.search(r"(?i)\b(what\s+is|define|what\s+constitutes)\b\s+(.*?)(\?|$)", qn)
         if m:
             tail = m.group(2)
-            tail = re.split(r"(?i)\b(and|,)\b\s+how\b", tail)[0].strip(" ,.")
+            tail = re.split(r"(?i)\b(?:and|,)\b\s+(?:how|what)\b", tail)[0].strip(" ,.")
             if tail:
                 add(tail)
 
@@ -155,6 +164,12 @@ def extract_anchor_terms(q: str, intent: Intent) -> list[str]:
         add("qualification")
     if re.search(r"\b(qualify|qualified|requalification)\b", ql):
         add("qualification")
+    if re.search(r"\biq\b", ql):
+        add("IQ")
+    if re.search(r"\boq\b", ql):
+        add("OQ")
+    if re.search(r"\bpq\b", ql):
+        add("PQ")
     if "process validation" in ql:
         add("process validation")
     if re.search(r"\bvalidat(e|ion|ed|ing)?\b", ql):
@@ -168,6 +183,53 @@ def extract_anchor_terms(q: str, intent: Intent) -> list[str]:
         add("effectiveness")
     if "risk" in ql or "risks" in ql or "risk management" in ql:
         add("risk management")
+    if "document control" in ql:
+        add("document control")
+        add("revision")
+    if "root cause" in ql:
+        add("root cause analysis")
+        add("investigation")
+    if "reference standard" in ql:
+        add("reference standard")
+    if "reconciliation" in ql:
+        add("reconciliation")
+    if "yield" in ql:
+        add("yield")
+    if "complaint" in ql or "complaints" in ql:
+        add("complaint")
+        add("investigation")
+    if "recall" in ql:
+        add("recall")
+    if "stability" in ql:
+        add("stability testing")
+    if "method transfer" in ql:
+        add("method transfer")
+        add("acceptance criteria")
+    if "audit program" in ql or "internal audits" in ql:
+        add("audit program")
+    if "access control" in ql or "user roles" in ql:
+        add("access control")
+    if "impact assessment" in ql:
+        add("impact assessment")
+        add("impact")
+    if "change control" in ql:
+        add("change control")
+    if "approval" in ql or "notification" in ql:
+        add("regulatory approval")
+    if "comparability" in ql:
+        add("comparability assessment")
+    if "software assurance" in ql or re.search(r"\bcsa\b", ql):
+        add("computer software assurance")
+    if "cold-chain" in ql or "cold chain" in ql:
+        add("cold chain")
+    if "warning letter" in ql:
+        add("warning letter")
+    if "contamination control strategy" in ql or re.search(r"\bccs\b", ql):
+        add("contamination control strategy")
+    if "archival" in ql or "readability" in ql:
+        add("archival")
+    if "inspection" in ql or "inspectors" in ql:
+        add("inspection")
 
     return terms
 

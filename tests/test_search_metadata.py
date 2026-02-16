@@ -18,3 +18,8 @@ def test_domain_boost_detects_oos_and_validation_signals():
     boosts = infer_domain_boost("How should OOS be investigated during process validation?")
     assert boosts.get("QC_Lab", 0.0) > 0.0
     assert boosts.get("Validation", 0.0) > 0.0
+
+
+def test_domain_boost_does_not_use_csv_keyword_for_validation_domain():
+    boosts = infer_domain_boost("How should computerized csv systems be managed?")
+    assert boosts.get("Validation", 0.0) == 0.0

@@ -16,9 +16,21 @@ from .metadata_schema import authority_from_folder, authority_from_source
 _WS_RE = re.compile(r"\s+")
 _PAGE_RE = re.compile(r"\bpage\s+\d+\s+of\s+\d+\b", flags=re.IGNORECASE)
 _PAGE_NUM_RE = re.compile(r"^\s*(?:page\s+)?\d+\s*(?:/\s*\d+)?\s*$", flags=re.IGNORECASE)
-_HEADING_RE = re.compile(r"^\d+(?:\.\d+)*\s+[A-Z][A-Za-z0-9 \-(),/&]{2,}$")
-_LIST_ROW_RE = re.compile(r"^\s*(?:[-*]|[a-zA-Z]\)|\d+[.)])\s+")
+_SECTION_PREFIX_RE = re.compile(
+    r"^\s*(?:annex|chapter|section|part|appendix|module)\b",
+    flags=re.IGNORECASE,
+)
+_NUMBERED_HEADING_RE = re.compile(
+    r"^\s*(?:\d+(?:\.\d+){0,4}|[ivxlcdm]{1,8})[.)]?\s+[A-Z][A-Za-z0-9 \-(),/&]{2,}$"
+)
+_ALL_CAPS_HEADING_RE = re.compile(r"^[A-Z0-9][A-Z0-9 \-(),/&]{4,}$")
+_LIST_ROW_RE = re.compile(
+    r"^\s*(?:[-*•]|[a-zA-Z]\)|\(?[ivxlcdm]{1,8}\)|\d+(?:\.\d+){0,3}[.)])\s+",
+    flags=re.IGNORECASE,
+)
 _TABLE_RE = re.compile(r"^\s*table\s+\d+[A-Za-z]?(?:[:.\-]\s*|\s+).*$", flags=re.IGNORECASE)
+_URL_LINE_RE = re.compile(r"^\s*(?:https?://|www\.)", flags=re.IGNORECASE)
+_FIGURE_RE = re.compile(r"^\s*(?:figure|fig\.)\s*\d+[A-Za-z]?\b", flags=re.IGNORECASE)
 
 
 def _normalize_line(line: str) -> str:
@@ -36,6 +48,62 @@ def _normalize_for_count(line: str) -> str:
     return _WS_RE.sub(" ", s).strip()
 
 
+def _is_heading_line(line: str) -> bool:
+    s = (line or "").strip()
+    if not s:
+        return False
+    if len(s) > 180:
+        return False
+    if _TABLE_RE.match(s) or _FIGURE_RE.match(s):
+        return False
+    if _SECTION_PREFIX_RE.match(s):
+        return True
+    if _NUMBERED_HEADING_RE.match(s):
+        return True
+    # Pure uppercase section titles are common in scanned/regulatory PDFs.
+    if _ALL_CAPS_HEADING_RE.match(s):
+        letters = sum(1 for ch in s if ch.isalpha())
+        return letters >= 6
+    return False
+
+
+def _is_list_item_line(line: str) -> bool:
+    return bool(_LIST_ROW_RE.match(line or ""))
+
+
+def _looks_like_table_row(line: str) -> bool:
+    s = (line or "").strip()
+    if not s:
+        return False
+    sl = s.lower()
+    if _TABLE_RE.match(s):
+        return True
+    if "|" in s or "\t" in s:
+        return True
+    if re.search(r"\brow\b|\bcolumn\b", sl):
+        return True
+
+    # Multi-column rows often have repeated wide spacing.
+    cols = [c for c in re.split(r"\s{2,}", s) if c.strip()]
+    if len(cols) >= 3:
+        numericish = sum(bool(re.search(r"\d", c)) for c in cols)
+        shortish = sum(len(c.strip()) <= 12 for c in cols)
+        headerish = sum(bool(re.match(r"^[A-Za-z][A-Za-z/\-]{1,20}$", c.strip())) for c in cols)
+        if numericish >= 2 or (numericish >= 1 and shortish >= 2) or headerish >= 3:
+            return True
+
+    # Dense alpha-numeric cells are often table leftovers.
+    letters = sum(ch.isalpha() for ch in s)
+    digits = sum(ch.isdigit() for ch in s)
+    punct = sum((not ch.isalnum() and not ch.isspace()) for ch in s)
+    total = max(1, len(s))
+    non_alpha_ratio = (digits + punct) / total
+    if non_alpha_ratio >= 0.42 and letters <= 24 and digits >= 3:
+        return True
+
+    return False
+
+
 def _looks_like_artifact_line(line: str) -> bool:
     s = line.strip()
     sl = s.lower()
@@ -47,69 +115,126 @@ def _looks_like_artifact_line(line: str) -> bool:
         return True
     if "table of contents" in sl:
         return True
+    if _URL_LINE_RE.match(s):
+        return True
+    if _FIGURE_RE.match(s):
+        return True
+    if _looks_like_table_row(s):
+        return True
     if set(s) <= {".", "-", "_"} and len(s) >= 6:
         return True
+    if re.match(r"^[\W_]{4,}$", s):
+        return True
     if re.match(r"^\d+(\.\d+)*\s*$", s):
+        return True
+    if re.match(r"^\(?[ivxlcdm]{1,8}\)?$", s, flags=re.IGNORECASE):
         return True
     return False
 
 
 def _is_table_or_list_paragraph(text: str) -> bool:
-    lines = [ln for ln in text.splitlines() if ln.strip()]
+    lines = [_normalize_line(ln) for ln in text.splitlines() if _normalize_line(ln)]
     if not lines:
         return True
     joined = " ".join(lines).lower()
     if "inspector" in joined and "aide memoir" in joined:
         return True
-    if any(_TABLE_RE.match(ln) for ln in lines):
+    if any(_looks_like_table_row(ln) for ln in lines):
         return True
     if re.search(r"\b(histogram|pareto|process capability)\b", joined):
         return True
-    if len(lines) >= 3:
-        list_like = sum(1 for ln in lines if _LIST_ROW_RE.match(ln) or re.search(r"\s{3,}", ln))
+    if all(_is_list_item_line(ln) for ln in lines) and len(lines) >= 10:
+        # Very long list-only fragments are usually low retrieval value.
+        return True
+    if len(lines) >= 6:
+        list_like = sum(1 for ln in lines if _is_list_item_line(ln) or re.search(r"\s{3,}", ln))
         if list_like / len(lines) >= 0.6:
             return True
     return False
 
 
-def _paragraphs_from_lines(lines: list[str]) -> list[str]:
-    paragraphs: list[str] = []
-    current: list[str] = []
+def _is_list_continuation(line: str) -> bool:
+    s = (line or "").strip()
+    if not s:
+        return False
+    if _is_heading_line(s) or _is_list_item_line(s):
+        return False
+    # Continuation lines usually start with lowercase or opening punctuation.
+    return s[0].islower() or s[0] in {"(", "[", "/", "&"}
 
-    def flush() -> None:
-        if not current:
+
+def _build_page_blocks(lines: list[str]) -> list[str]:
+    blocks: list[str] = []
+    section = ""
+    para: list[str] = []
+    list_items: list[str] = []
+
+    def with_section(text: str) -> str:
+        t = (text or "").strip()
+        if not t:
+            return ""
+        if not section:
+            return t
+        if t.lower().startswith(section.lower()):
+            return t
+        return f"{section}\n{t}"
+
+    def flush_para() -> None:
+        if not para:
             return
-        text = " ".join(current).strip()
-        text = _WS_RE.sub(" ", text)
-        if text:
-            paragraphs.append(text)
-        current.clear()
+        t = _WS_RE.sub(" ", " ".join(para)).strip()
+        para.clear()
+        if not t:
+            return
+        t = with_section(t)
+        if t and not _is_table_or_list_paragraph(t):
+            blocks.append(t)
+
+    def flush_list() -> None:
+        if not list_items:
+            return
+        t = "\n".join(x.strip() for x in list_items if x.strip())
+        list_items.clear()
+        if not t:
+            return
+        t = with_section(t)
+        if t and not _is_table_or_list_paragraph(t):
+            blocks.append(t)
 
     for raw in lines:
         line = _normalize_line(raw)
         if not line or _looks_like_artifact_line(line):
-            flush()
+            flush_para()
+            flush_list()
             continue
 
-        # Keep section headings as their own paragraph boundary.
-        if _HEADING_RE.match(line):
-            flush()
-            paragraphs.append(line)
+        if _is_heading_line(line):
+            flush_para()
+            flush_list()
+            section = line
+            blocks.append(line)
             continue
 
-        if _LIST_ROW_RE.match(line):
-            flush()
-            paragraphs.append(line)
+        if _is_list_item_line(line):
+            flush_para()
+            list_items.append(line)
             continue
 
-        if current:
-            prev = current[-1]
-            if prev.endswith((".", "!", "?", ":", ";")):
-                flush()
-        current.append(line)
+        if list_items and _is_list_continuation(line):
+            list_items[-1] = f"{list_items[-1]} {line}".strip()
+            continue
 
-    flush()
-    return paragraphs
+        if list_items:
+            flush_list()
+
+        # Prefer short coherent paragraphs over page-wide merged text.
+        if para and para[-1].endswith((".", "!", "?")):
+            flush_para()
+        para.append(line)
+
+    flush_para()
+    flush_list()
+    return blocks
 
 
 def _clean_chunk_text(text: str) -> str:
@@ -119,27 +244,85 @@ def _clean_chunk_text(text: str) -> str:
     return s
 
 
+def _split_long_block(block: str, chunk_size: int) -> list[str]:
+    text = (block or "").strip()
+    if not text:
+        return []
+    if len(text) <= chunk_size:
+        return [text]
+
+    out: list[str] = []
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    cur = ""
+    for s in sentences:
+        if not cur:
+            cur = s
+            continue
+        if len(cur) + 1 + len(s) <= chunk_size:
+            cur += " " + s
+        else:
+            out.append(cur.strip())
+            cur = s
+    if cur:
+        out.append(cur.strip())
+    if out:
+        return out
+
+    # Fallback hard split if sentence splitting fails.
+    hard: list[str] = []
+    start = 0
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        part = text[start:end].strip()
+        if part:
+            hard.append(part)
+        if end == len(text):
+            break
+        start = end
+    return hard
+
+
+def _chunk_blocks(blocks: list[str], chunk_size: int = 900, min_chunk_size: int = 220) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    def flush() -> None:
+        nonlocal current_len
+        if not current:
+            return
+        chunks.append("\n".join(current).strip())
+        current.clear()
+        current_len = 0
+
+    for block in blocks:
+        if not block:
+            continue
+        sub_blocks = _split_long_block(block, chunk_size=max(320, chunk_size))
+        for sub in sub_blocks:
+            add_len = len(sub) if not current else (1 + len(sub))
+            if current and current_len + add_len > chunk_size:
+                flush()
+            current.append(sub)
+            current_len += add_len
+    flush()
+
+    # Merge tiny tails to avoid brittle short chunks.
+    merged: list[str] = []
+    for c in chunks:
+        if merged and len(c) < min_chunk_size:
+            merged[-1] = f"{merged[-1]}\n{c}".strip()
+        else:
+            merged.append(c)
+    return merged
+
+
 
 def chunk_text(text: str, chunk_size: int = 900) -> list[str]:
     if not text:
         return []
-
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    chunks: list[str] = []
-    current = ""
-
-    for p in paragraphs:
-        if len(current) + len(p) < chunk_size:
-            current += " " + p if current else p
-        else:
-            if current:
-                chunks.append(current.strip())
-            current = p
-
-    if current:
-        chunks.append(current.strip())
-
-    return chunks
+    blocks = [b.strip() for b in re.split(r"\n\s*\n+", text) if b.strip()]
+    return _chunk_blocks(blocks, chunk_size=chunk_size)
 
 
 
@@ -153,17 +336,25 @@ def is_low_value(text: str) -> bool:
     if re.search(r"\btable\s+\d+\b", t):
         return True
 
-# Drop "Inspector’s Aide Memoir" table content
+    # Drop "Inspector's Aide Memoir" style table content.
     if "aide memoir" in t or ("inspector" in t and "memoir" in t):
         return True
 
-# Drop Q9 annex/tool-list noise
+    # Drop Q9 annex/tool-list noise.
     if "histogram" in t or "pareto" in t or "process capability" in t:
         return True
 
     if "table of contents" in t:
         return True
     if "................................" in text:
+        return True
+    if _URL_LINE_RE.search(text):
+        return True
+    if _looks_like_table_row(text):
+        return True
+    if re.search(r"\b(?:row|column)\b", t) and re.search(r"\b\d+\b", t):
+        return True
+    if sum(ch.isdigit() for ch in text) >= 12 and len(re.findall(r"[A-Za-z]{3,}", text)) <= 4:
         return True
 
     if len(text) < 60:
@@ -215,13 +406,11 @@ def ingest_folder(folder: Path, source: str | None = None, authority: str | None
                 for ln in lines
                 if _normalize_for_count(ln) not in repeated and not _looks_like_artifact_line(ln)
             ]
-            paragraphs = _paragraphs_from_lines(filtered_lines)
-            paragraphs = [p for p in paragraphs if not _is_table_or_list_paragraph(p)]
-            page_text = "\n\n".join(paragraphs)
-            if not page_text:
+            blocks = _build_page_blocks(filtered_lines)
+            if not blocks:
                 continue
 
-            for i, c in enumerate(chunk_text(page_text), start=1):
+            for i, c in enumerate(_chunk_blocks(blocks), start=1):
                 c = _clean_chunk_text(c)
                 if is_low_value(c):
                     continue

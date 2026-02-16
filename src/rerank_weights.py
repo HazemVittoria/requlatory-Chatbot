@@ -22,19 +22,8 @@ class RerankWeights:
     definition_phrase_boost: float = 0.06
     procedure_phrase_boost: float = 0.05
 
-    risk_phrase_boost: float = 0.18
-    risk_csv_penalty: float = 0.20
-
-    training_computerized_penalty: float = 0.60
-    training_doc_term_boost: float = 0.15
-    training_missing_doc_penalty: float = 0.10
-    training_evidence_term_boost: float = 0.20
-    training_coverage_boost: float = 0.12
-    training_full_coverage_bonus: float = 0.25
-    training_off_topic_penalty: float = 0.35
-    training_equipment_penalty: float = 0.20
-    training_q9_noise_penalty: float = 0.60
-    training_nonbinding_penalty: float = 0.60
+    lexical_action_phrase_boost: float = 0.04
+    lexical_noise_penalty: float = 0.12
 
 
 _CACHE: RerankWeights | None = None

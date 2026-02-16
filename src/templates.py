@@ -6,6 +6,7 @@ from typing import Iterable
 
 from .intent_router import to_presentation_intent
 from .qa_types import AnswerResult, Citation, Intent, Scope
+from .specialization_policy import select_procedure_specialization
 
 _NUM_ONLY_BULLET_RE = re.compile(r"^\s*-\s*\(?\d+(\.\d+)*\)?\.?\s*$")
 
@@ -83,7 +84,12 @@ def _force_include(text: str, terms: list[str]) -> str:
 
     # If the first missing term is a phrase, prefix it once instead of appending
     first = missing[0]
-    if " " in first and not low.startswith(first.lower()):
+    if (
+        " " in first
+        and len(first.split()) <= 4
+        and "," not in first
+        and not low.startswith(first.lower())
+    ):
         t = f"{first}: {t}"
         low = t.lower()
         missing = [term for term in missing[1:] if term.lower() not in low]
@@ -395,78 +401,16 @@ def render_answer(
     # Procedure / Procedure requirements
     # -------------------------
     if p_intent == "procedure":
-        src_l = src.lower()
-        anchors_l = " ".join(anchor_terms).lower()
-
-        if intent == "procedure" and "risk management" in anchors_l:
-            checklist = [
-                "Define a quality risk management plan, including the risk question, scope, and quality objective before starting the assessment.",
-                "Identify hazards and potential harms using relevant process, product, and patient-safety information.",
-                "Analyze each risk by assessing severity, probability of occurrence, and detectability where applicable.",
-                "Evaluate risks against predefined acceptance criteria to prioritize action.",
-                "Implement risk controls to reduce risk to an acceptable level, proportional to risk significance.",
-                "Document rationale, decisions, and residual risk acceptance with responsible approvers.",
-                "Communicate outcomes to stakeholders and integrate controls into procedures and training.",
-                "Perform periodic risk review and update the assessment when changes, deviations, or new knowledge is identified.",
-            ]
-            text = _bullets_with_sources(checklist, citations)
+        special = select_procedure_specialization(intent=intent, anchor_terms=anchor_terms, source_text=src)
+        if special is not None:
+            body = _bullets_with_sources(special.bullets, citations)
+            text = f"{special.intro}\n\n{body}".strip() if special.intro else body
             return AnswerResult(
                 text=_finalize(text, anchor_terms),
                 intent=intent,
                 scope=scope,
                 citations=citations,
-                used_chunks=[{"kind": "confidence", "sentence_confidence": 0.75}],
-                presentation_intent=p_intent,  # type: ignore[arg-type]
-            )
-
-        # Narrow exception: CSV / computerized systems validation checklist
-        csv_signals = (
-            "computerized",
-            "computerised",
-            "csv",
-            "part 11",
-            "annex 11",
-            "electronic record",
-            "electronic signature",
-            "audit trail",
-            "gamp",
-        )
-        csv_question = (
-            intent == "procedure_requirements"
-            and (
-                "computerized" in anchors_l
-                or "annex 11" in anchors_l
-                or "part 11" in anchors_l
-                or "csv" in anchors_l
-            )
-            and "validation" in anchors_l
-        )
-
-        if csv_question and any(s in src_l for s in csv_signals):
-            intro = (
-                "Computerized systems should be validated using a risk-based lifecycle approach, "
-                "supported by documented evidence."
-            )
-            checklist = [
-                "Define intended use and GxP impact (scope the computerized system).",
-                "Perform and document a risk assessment to determine validation depth and controls.",
-                "Define requirements (URS) and ensure traceability to tests.",
-                "Assess/supervise suppliers and clarify responsibilities.",
-                "Execute documented testing (as applicable: IQ/OQ/PQ or verification against requirements).",
-                "Ensure data integrity controls (access control, audit trails, security, backup/restore, record retention).",
-                "Control changes (impact assessment, change control, regression testing/revalidation as needed).",
-                "Review/approve results and maintain evidence (reports, deviations, approvals).",
-                "Perform periodic review to confirm continued validated state and security posture.",
-                "Manage retirement/decommissioning with data retention and migration controls.",
-            ]
-            text = intro + "\n\n" + _bullets_with_sources(checklist[:10], citations)
-
-            return AnswerResult(
-                text=_finalize(text, anchor_terms),
-                intent=intent,
-                scope=scope,
-                citations=citations,
-                used_chunks=[{"kind": "confidence", "sentence_confidence": 0.78}],
+                used_chunks=[{"kind": "confidence", "sentence_confidence": special.sentence_confidence}],
                 presentation_intent=p_intent,  # type: ignore[arg-type]
             )
 
