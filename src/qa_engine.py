@@ -221,10 +221,17 @@ def _question_domain_score(question: str) -> float:
         "form 483",
         "electronic signature",
         "audit trail",
+        "out of specification",
+        "out of trend",
+        "inspection plan",
     ]
     for p in phrase_hits:
         if p in ql:
             score += 0.22
+    if re.search(r"\b(oos|oot)\b", ql):
+        score += 0.22
+    if "out of trend" in ql or "out-of-trend" in ql:
+        score += 0.12
 
     score += 0.16 * sum(1 for t in _SPECIFIC_TERMS if t in qt)
     score += 0.05 * sum(1 for t in _GENERIC_TERMS if t in qt)
@@ -291,6 +298,25 @@ def answer(question: str):
     ]
     retrieval_scores = [float(c.get("_score", 0.0)) for c in chunks]
     domain_conf = _domain_relevance_conf(question, chunks, anchor_terms)
+    question_domain = _question_domain_score(question)
+
+    # Definition-style questions are vulnerable to lexical drift on generic wording
+    # (e.g., "policy", "process"). Require stronger domain signal from the query itself.
+    if intent in {"definition", "mixed_definition_controls"} and question_domain < 0.18:
+        retrieval_conf = _retrieval_confidence(retrieval_scores)
+        overall_conf = (0.55 * retrieval_conf) + (0.45 * domain_conf)
+        return _insufficient_response(
+            question=question,
+            intent=intent,
+            scope=scope,
+            citations=citations[:3],
+            retrieval_conf=retrieval_conf,
+            sentence_conf=0.0,
+            domain_conf=domain_conf,
+            overall_conf=overall_conf,
+            threshold=_confidence_threshold(),
+            anchor_terms=anchor_terms,
+        )
 
     # Pre-answer domain gate: if query looks non-regulatory, avoid generating a fluent but off-topic answer.
     if domain_conf < 0.12:

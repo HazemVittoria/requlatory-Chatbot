@@ -1,5 +1,5 @@
 {"id":"rf001","question":"how to qualify a testing device?","expected_mode":"answer","must_include":["qualification"],"must_not_include":["insufficient evidence"],"require_source_tags":true,"min_citations":1}
 {"id":"rf002","question":"How many vacation days do employees get?","expected_mode":"insufficient","must_include":["insufficient evidence"],"must_not_include":[],"require_source_tags":false,"min_citations":0}
-{"id":"rf003","question":"make an inspection plan","expected_mode":"insufficient","must_include":["insufficient evidence"],"must_not_include":[],"require_source_tags":false,"min_citations":0}
-{"id":"rf004","question":"what is OOS","expected_mode":"insufficient","must_include":["insufficient evidence"],"must_not_include":[],"require_source_tags":false,"min_citations":0}
-{"id":"rf005","question":"what is out of trend","expected_mode":"insufficient","must_include":["insufficient evidence"],"must_not_include":[],"require_source_tags":false,"min_citations":0}
+{"id":"rf003","question":"make an inspection plan","expected_mode":"answer","must_include":["inspection","plan"],"must_not_include":["insufficient evidence"],"require_source_tags":true,"min_citations":1}
+{"id":"rf004","question":"what is OOS","expected_mode":"answer","must_include":["out-of-specification"],"must_not_include":["insufficient evidence"],"require_source_tags":false,"min_citations":1}
+{"id":"rf005","question":"what is out of trend","expected_mode":"answer","must_include":["out-of-trend"],"must_not_include":["insufficient evidence"],"require_source_tags":false,"min_citations":1}

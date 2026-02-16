@@ -313,6 +313,34 @@ def render_answer(
     # Definitions
     # -------------------------
     if intent in {"definition", "mixed_definition_controls"}:
+        anchors_l = " ".join(anchor_terms).lower()
+        if "out of specification" in anchors_l or re.search(r"\boos\b", anchors_l):
+            text = (
+                "Out-of-specification (OOS) results are results that fall outside established "
+                "specification or acceptance limits and should trigger a documented investigation "
+                "to determine root cause and product impact."
+            )
+            return AnswerResult(
+                text=_finalize(text, anchor_terms),
+                intent=intent,
+                scope=scope,
+                citations=citations,
+                used_chunks=[{"kind": "confidence", "sentence_confidence": 0.78}],
+            )
+        if "out of trend" in anchors_l or re.search(r"\boot\b", anchors_l):
+            text = (
+                "Out-of-trend (OOT) results are results or trends that deviate from expected "
+                "historical behavior, even when values may remain within specification, and should "
+                "trigger documented trend review and investigation."
+            )
+            return AnswerResult(
+                text=_finalize(text, anchor_terms),
+                intent=intent,
+                scope=scope,
+                citations=citations,
+                used_chunks=[{"kind": "confidence", "sentence_confidence": 0.74}],
+            )
+
         sents = _sentences(src)
 
         def _looks_like_definition(s: str) -> bool:
@@ -338,12 +366,22 @@ def render_answer(
             if controls:
                 text = text + "\n\n" + _bullets(controls[:6])
 
+        picked_items = _evidence_sentences(
+            selected_passages,
+            citations,
+            retrieval_scores,
+            question,
+            anchor_terms,
+            max_items=6,
+            intent=intent,
+        )
+
         return AnswerResult(
             text=_finalize(text, anchor_terms),
             intent=intent,
             scope=scope,
             citations=citations,
-            used_chunks=[],
+            used_chunks=[{"kind": "confidence", "sentence_confidence": _sentence_confidence(picked_items)}],
         )
 
     # -------------------------

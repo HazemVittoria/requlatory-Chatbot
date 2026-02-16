@@ -213,6 +213,30 @@ def expand_query(query: str) -> str:
             "periodic requalification",
             "acceptance criteria",
         ]
+    if "oos" in ql or "out of specification" in ql or "out-of-specification" in ql:
+        extras += [
+            "out of specification",
+            "oos investigation",
+            "laboratory investigation",
+            "root cause",
+            "corrective and preventive action",
+        ]
+    if "oot" in ql or "out of trend" in ql or "out-of-trend" in ql:
+        extras += [
+            "out of trend",
+            "oot investigation",
+            "trend analysis",
+            "laboratory investigation",
+            "root cause",
+        ]
+    if "inspection plan" in ql or "inspection planning" in ql:
+        extras += [
+            "inspection planning",
+            "inspection scope",
+            "inspection checklist",
+            "inspection schedule",
+            "inspection observations",
+        ]
     return (q + " " + " ".join(extras)).strip()
 
 

@@ -64,6 +64,10 @@ def detect_intent(q: str) -> Intent:
     if "difference between" in qn or re.search(r"\bvs\.?\b|\bversus\b", qn):
         return "difference"
 
+    # Practical request phrasing that does not start with "how".
+    if "inspection plan" in qn or "inspection planning" in qn:
+        return "procedure"
+
     # procedure (requirements only if must/required/expectations/requirements)
     if qn.startswith("how ") or "what steps" in qn or "procedure" in qn:
         if "requirements" in qn or re.search(r"\b(must|required|expectations)\b", qn):
@@ -133,6 +137,10 @@ def extract_anchor_terms(q: str, intent: Intent) -> list[str]:
 
     if "oos" in ql or "oot" in ql or "out-of-specification" in ql or "out-of-trend" in ql:
         add("investigation")
+    if "oos" in ql or "out of specification" in ql or "out-of-specification" in ql:
+        add("out of specification")
+    if "oot" in ql or "out of trend" in ql or "out-of-trend" in ql:
+        add("out of trend")
 
     if "supplier" in ql:
         add("supplier")

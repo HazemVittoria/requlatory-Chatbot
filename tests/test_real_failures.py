@@ -61,7 +61,7 @@ def _tokenize(text: str) -> set[str]:
         "into",
         "under",
     }
-    words = {w.lower() for w in re.findall(r"[a-zA-Z]{4,}", text or "")}
+    words = {w.lower() for w in re.findall(r"[a-zA-Z]{3,}", text or "")}
     return {w for w in words if w not in stop}
 
 
