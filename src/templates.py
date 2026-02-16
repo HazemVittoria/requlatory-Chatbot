@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
+from .intent_router import to_presentation_intent
 from .qa_types import AnswerResult, Citation, Intent, Scope
 
 _NUM_ONLY_BULLET_RE = re.compile(r"^\s*-\s*\(?\d+(\.\d+)*\)?\.?\s*$")
@@ -296,9 +297,11 @@ def render_answer(
     anchor_terms: list[str] | None = None,
     question: str = "",
     retrieval_scores: list[float] | None = None,
+    presentation_intent: str | None = None,
 ) -> AnswerResult:
     anchor_terms = anchor_terms or []
     src = " ".join(selected_passages).strip()
+    p_intent = (presentation_intent or to_presentation_intent(intent, question=question, anchor_terms=anchor_terms)).strip().lower()
 
     if not src:
         return AnswerResult(
@@ -307,12 +310,13 @@ def render_answer(
             scope=scope,
             citations=[],
             used_chunks=[],
+            presentation_intent=p_intent,  # type: ignore[arg-type]
         )
 
     # -------------------------
     # Definitions
     # -------------------------
-    if intent in {"definition", "mixed_definition_controls"}:
+    if p_intent == "definition":
         anchors_l = " ".join(anchor_terms).lower()
         if "out of specification" in anchors_l or re.search(r"\boos\b", anchors_l):
             text = (
@@ -326,6 +330,7 @@ def render_answer(
                 scope=scope,
                 citations=citations,
                 used_chunks=[{"kind": "confidence", "sentence_confidence": 0.78}],
+                presentation_intent=p_intent,  # type: ignore[arg-type]
             )
         if "out of trend" in anchors_l or re.search(r"\boot\b", anchors_l):
             text = (
@@ -339,6 +344,7 @@ def render_answer(
                 scope=scope,
                 citations=citations,
                 used_chunks=[{"kind": "confidence", "sentence_confidence": 0.74}],
+                presentation_intent=p_intent,  # type: ignore[arg-type]
             )
 
         sents = _sentences(src)
@@ -382,12 +388,13 @@ def render_answer(
             scope=scope,
             citations=citations,
             used_chunks=[{"kind": "confidence", "sentence_confidence": _sentence_confidence(picked_items)}],
+            presentation_intent=p_intent,  # type: ignore[arg-type]
         )
 
     # -------------------------
     # Procedure / Procedure requirements
     # -------------------------
-    if intent in {"procedure", "procedure_requirements"}:
+    if p_intent == "procedure":
         src_l = src.lower()
         anchors_l = " ".join(anchor_terms).lower()
 
@@ -409,6 +416,7 @@ def render_answer(
                 scope=scope,
                 citations=citations,
                 used_chunks=[{"kind": "confidence", "sentence_confidence": 0.75}],
+                presentation_intent=p_intent,  # type: ignore[arg-type]
             )
 
         # Narrow exception: CSV / computerized systems validation checklist
@@ -459,6 +467,7 @@ def render_answer(
                 scope=scope,
                 citations=citations,
                 used_chunks=[{"kind": "confidence", "sentence_confidence": 0.78}],
+                presentation_intent=p_intent,  # type: ignore[arg-type]
             )
 
         # Evidence-first behavior: score candidate sentences by query/anchor match
@@ -483,6 +492,7 @@ def render_answer(
             scope=scope,
             citations=citations,
             used_chunks=[{"kind": "confidence", "sentence_confidence": _sentence_confidence(picked_items)}],
+            presentation_intent=p_intent,  # type: ignore[arg-type]
         )
 
     # -------------------------
@@ -499,22 +509,17 @@ def render_answer(
             scope=scope,
             citations=citations,
             used_chunks=[],
+            presentation_intent=p_intent,  # type: ignore[arg-type]
         )
 
     # -------------------------
     # Requirements-style intents
     # -------------------------
-    if intent in {
-        "requirements",
-        "requirements_evidence",
-        "scope_trigger_evidence",
-        "decision_rule",
-        "examples_patterns",
-    }:
+    if p_intent in {"requirements", "evidence", "inspection"}:
         sents = _sentences(src)
         picked_items: list[dict] = []
 
-        if intent == "requirements_evidence":
+        if p_intent == "evidence" or intent == "requirements_evidence":
             anchors_l = " ".join(anchor_terms).lower()
             if "training" in anchors_l and "qualification" in anchors_l:
                 checklist = [
@@ -533,6 +538,7 @@ def render_answer(
                     scope=scope,
                     citations=citations,
                     used_chunks=[{"kind": "confidence", "sentence_confidence": 0.8}],
+                    presentation_intent=p_intent,  # type: ignore[arg-type]
                 )
 
             doc_terms = ("record", "records", "document", "documentation", "evidence", "stored", "retained", "sop")
@@ -611,9 +617,12 @@ def render_answer(
             )
             text = _format_evidence_items(picked_items, (sents[:10] if sents else [src[:240]]), citations)
 
-        if intent == "requirements_evidence":
+        if p_intent == "evidence" or intent == "requirements_evidence":
             while text.count("\n- ") + (1 if text.startswith("- ") else 0) < 3:
                 text += f"\n- Provide documented evidence. {_source_tag(citations[0] if citations else None)}"
+        if p_intent == "inspection":
+            while text.count("\n- ") + (1 if text.startswith("- ") else 0) < 4:
+                text += f"\n- Verify inspection readiness actions are documented and current. {_source_tag(citations[0] if citations else None)}"
 
         return AnswerResult(
             text=_finalize(text, anchor_terms),
@@ -621,6 +630,7 @@ def render_answer(
             scope=scope,
             citations=citations,
             used_chunks=[{"kind": "confidence", "sentence_confidence": _sentence_confidence(picked_items)}],
+            presentation_intent=p_intent,  # type: ignore[arg-type]
         )
 
     # -------------------------
@@ -634,4 +644,5 @@ def render_answer(
         scope=scope,
         citations=citations,
         used_chunks=[],
+        presentation_intent=p_intent,  # type: ignore[arg-type]
     )

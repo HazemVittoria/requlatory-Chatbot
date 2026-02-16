@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .qa_types import Intent, Scope
+from .qa_types import Intent, PresentationIntent, Scope
 
 
 @dataclass(frozen=True)
@@ -12,6 +12,7 @@ class Route:
     intent: Intent
     scope: Scope
     anchor_terms: list[str]
+    presentation_intent: PresentationIntent
 
 
 def _normalize(q: str) -> str:
@@ -171,11 +172,42 @@ def extract_anchor_terms(q: str, intent: Intent) -> list[str]:
     return terms
 
 
+def to_presentation_intent(
+    intent: Intent,
+    *,
+    question: str = "",
+    anchor_terms: list[str] | None = None,
+) -> PresentationIntent:
+    ql = (question or "").lower()
+    al = " ".join(anchor_terms or []).lower()
+
+    if intent in {"definition", "mixed_definition_controls"}:
+        return "definition"
+    if intent in {"procedure", "procedure_requirements", "difference"}:
+        return "procedure"
+    if intent == "requirements_evidence":
+        return "evidence"
+    if intent in {"requirements", "scope_trigger_evidence", "decision_rule"}:
+        return "requirements"
+    if intent == "examples_patterns":
+        if "inspection" in ql or "inspection" in al or "483" in ql:
+            return "inspection"
+        return "requirements"
+
+    # Unknown intent fallback remains deterministic and conservative.
+    if "inspection" in ql or "inspection" in al or "483" in ql:
+        return "inspection"
+    if any(t in ql for t in ("evidence", "documentation", "records")):
+        return "evidence"
+    return "requirements"
+
+
 def route(question: str) -> Route:
     intent = detect_intent(question)
     scope = detect_scope(question)
     anchors = extract_anchor_terms(question, intent)
-    return Route(intent=intent, scope=scope, anchor_terms=anchors)
+    presentation_intent = to_presentation_intent(intent, question=question, anchor_terms=anchors)
+    return Route(intent=intent, scope=scope, anchor_terms=anchors, presentation_intent=presentation_intent)
     # Equipment/device qualification questions should be treated as procedure requirements.
     has_device_terms = bool(re.search(r"\b(device|equipment|instrument|testing device|test instrument)\b", qn))
     has_qual_terms = bool(re.search(r"\b(qualify|qualified|qualification|requalification|iq|oq|pq)\b", qn))

@@ -8,6 +8,7 @@ Intent = Literal[
     "mixed_definition_controls","procedure_requirements","unknown",
 ]
 Scope = Literal["ICH","FDA","EMA","SOPS","MIXED"]
+PresentationIntent = Literal["definition", "requirements", "procedure", "evidence", "inspection"]
 
 @dataclass(frozen=True)
 class Citation:
@@ -22,3 +23,4 @@ class AnswerResult:
     scope: Scope
     citations: list[Citation]
     used_chunks: list[dict[str, Any]] | None = None
+    presentation_intent: PresentationIntent | None = None

@@ -62,7 +62,17 @@ def _tokenize(text: str) -> set[str]:
         "under",
     }
     words = {w.lower() for w in re.findall(r"[a-zA-Z]{3,}", text or "")}
-    return {w for w in words if w not in stop}
+
+    def norm(w: str) -> str:
+        if w.startswith("qualif"):
+            return "qualif"
+        if w.startswith("test") or w in {"analytical", "analysis"}:
+            return "test"
+        if w in {"device", "equipment", "instrument", "instruments"}:
+            return "equipment"
+        return w
+
+    return {norm(w) for w in words if w not in stop}
 
 
 def _source_tags(text: str) -> list[tuple[str, int]]:

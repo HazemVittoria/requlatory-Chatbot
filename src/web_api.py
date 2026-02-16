@@ -10,7 +10,24 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .qa_engine import answer
+from . import search as search_module
 from .telemetry import QueryLogger, build_report, default_log_path, event_from_payload
+
+
+_INDEX_READY = threading.Event()
+_INDEX_WARM_ERROR: str = ""
+
+
+def _warm_index_background() -> None:
+    global _INDEX_WARM_ERROR
+    try:
+        # Trigger index build/load once so first user query is responsive.
+        search_module.search_chunks("index warmup", top_k=1, scope="MIXED")
+        _INDEX_WARM_ERROR = ""
+    except Exception as e:
+        _INDEX_WARM_ERROR = str(e)
+    finally:
+        _INDEX_READY.set()
 
 
 def _question_hash(question: str) -> str:
@@ -45,6 +62,16 @@ def _extract_suggestions(res: Any) -> list[str]:
     return []
 
 
+def _extract_retrieval_profile(res: Any) -> dict[str, Any]:
+    for item in (getattr(res, "used_chunks", None) or []):
+        if isinstance(item, dict) and item.get("kind") == "retrieval_profile":
+            return {
+                "top_authorities": dict(item.get("top_authorities", {}) or {}),
+                "top_domains": dict(item.get("top_domains", {}) or {}),
+            }
+    return {"top_authorities": {}, "top_domains": {}}
+
+
 def build_answer_payload(question: str) -> dict[str, Any]:
     q = (question or "").strip()
     if not q:
@@ -72,10 +99,12 @@ def build_answer_payload(question: str) -> dict[str, Any]:
         "answer": text,
         "insufficient_evidence": insufficient,
         "intent": getattr(res, "intent", "unknown"),
+        "presentation_intent": getattr(res, "presentation_intent", "requirements"),
         "scope": getattr(res, "scope", "MIXED"),
         "citations": cits,
         "suggestions": _extract_suggestions(res),
         "confidence": _extract_confidence(res),
+        "retrieval_profile": _extract_retrieval_profile(res),
         "latency_ms": round(latency_ms, 2),
     }
     return payload
@@ -311,6 +340,7 @@ _HTML = """<!doctype html>
 
         chipsEl.innerHTML = "";
         chipsEl.appendChild(chip("intent: " + data.intent));
+        chipsEl.appendChild(chip("presentation: " + (data.presentation_intent || "requirements")));
         chipsEl.appendChild(chip("scope: " + data.scope));
         chipsEl.appendChild(chip("latency: " + data.latency_ms + "ms"));
         const conf = data.confidence || {};
@@ -388,7 +418,15 @@ class RegulatoryApiHandler(BaseHTTPRequestHandler):
             self._send_html(200, _HTML)
             return
         if path == "/health":
-            self._send_json(200, {"status": "ok"})
+            self._send_json(
+                200,
+                {
+                    "status": "ok",
+                    "index_ready": _INDEX_READY.is_set() and not _INDEX_WARM_ERROR,
+                    "index_warming": not _INDEX_READY.is_set(),
+                    "index_error": _INDEX_WARM_ERROR,
+                },
+            )
             return
         if path == "/metrics":
             self._send_json(200, self.metrics.snapshot())
@@ -425,6 +463,25 @@ class RegulatoryApiHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "Field 'question' is required."})
             return
 
+        if not _INDEX_READY.is_set():
+            self._send_json(
+                503,
+                {
+                    "error": "Index is initializing. Please retry in a few moments.",
+                    "code": "INDEX_WARMING",
+                },
+            )
+            return
+        if _INDEX_WARM_ERROR:
+            self._send_json(
+                500,
+                {
+                    "error": f"Index initialization failed: {_INDEX_WARM_ERROR}",
+                    "code": "INDEX_INIT_FAILED",
+                },
+            )
+            return
+
         try:
             payload = build_answer_payload(question)
         except Exception as e:
@@ -440,8 +497,11 @@ class RegulatoryApiHandler(BaseHTTPRequestHandler):
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
+    _INDEX_READY.clear()
+    threading.Thread(target=_warm_index_background, daemon=True).start()
     server = ThreadingHTTPServer((host, port), RegulatoryApiHandler)
     print(f"Regulatory QA API running on http://{host}:{port}")
+    print("Index warmup started in background. /health shows readiness.")
     server.serve_forever()
 
 

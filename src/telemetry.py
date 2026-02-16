@@ -67,16 +67,19 @@ class QueryLogger:
 def event_from_payload(payload: dict[str, Any], *, source: str = "web_api") -> dict[str, Any]:
     cits = payload.get("citations") or []
     suggestions = payload.get("suggestions") or []
+    retrieval_profile = payload.get("retrieval_profile") or {}
     return {
         "ts_utc": _utc_now_iso(),
         "source": source,
         "question_hash": payload.get("question_hash", ""),
         "question_text": payload.get("question", ""),
         "intent": payload.get("intent", "unknown"),
+        "presentation_intent": payload.get("presentation_intent", "requirements"),
         "scope": payload.get("scope", "MIXED"),
         "latency_ms": float(payload.get("latency_ms", 0.0)),
         "insufficient_evidence": bool(payload.get("insufficient_evidence", False)),
         "confidence": payload.get("confidence", {}),
+        "retrieval_profile": retrieval_profile,
         "citations": cits[:5],
         "suggestions": suggestions[:5],
     }

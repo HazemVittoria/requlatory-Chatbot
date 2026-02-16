@@ -4,7 +4,7 @@ import os
 from dataclasses import replace
 
 from .golden_shims import apply_golden_shims
-from .intent_router import route
+from .intent_router import route, to_presentation_intent
 from .search import search_chunks
 from .templates import render_answer, Citation
 from .qa_types import AnswerResult
@@ -175,6 +175,8 @@ def _insufficient_response(
     overall_conf: float,
     threshold: float,
     anchor_terms: list[str],
+    presentation_intent: str,
+    retrieval_profile: dict[str, object] | None = None,
 ) -> AnswerResult:
     suggestions = _suggest_rephrases(question, anchor_terms)
     msg = (
@@ -183,26 +185,45 @@ def _insufficient_response(
     )
     msg += "\n\nTry one of these rephrasings:\n"
     msg += "\n".join([f"- {s}" for s in suggestions])
+    used_chunks = [
+        {
+            "kind": "confidence",
+            "retrieval_confidence": round(retrieval_conf, 4),
+            "sentence_confidence": round(sentence_conf, 4),
+            "domain_relevance": round(domain_conf, 4),
+            "overall_confidence": round(overall_conf, 4),
+            "threshold": round(threshold, 4),
+        },
+        {
+            "kind": "suggestions",
+            "items": suggestions,
+        },
+    ]
+    if retrieval_profile:
+        used_chunks.append({"kind": "retrieval_profile", **retrieval_profile})
+
     return AnswerResult(
         text=msg,
         intent=intent,  # type: ignore[arg-type]
         scope=scope,  # type: ignore[arg-type]
         citations=citations[:3],
-        used_chunks=[
-            {
-                "kind": "confidence",
-                "retrieval_confidence": round(retrieval_conf, 4),
-                "sentence_confidence": round(sentence_conf, 4),
-                "domain_relevance": round(domain_conf, 4),
-                "overall_confidence": round(overall_conf, 4),
-                "threshold": round(threshold, 4),
-            },
-            {
-                "kind": "suggestions",
-                "items": suggestions,
-            },
-        ],
+        presentation_intent=presentation_intent,  # type: ignore[arg-type]
+        used_chunks=used_chunks,
     )
+
+
+def _retrieval_profile(chunks: list[dict]) -> dict[str, object]:
+    authority_counts: dict[str, int] = {}
+    domain_counts: dict[str, int] = {}
+    for c in chunks[:5]:
+        a = str(c.get("authority") or c.get("source") or "OTHER")
+        d = str(c.get("domain") or "Other")
+        authority_counts[a] = authority_counts.get(a, 0) + 1
+        domain_counts[d] = domain_counts.get(d, 0) + 1
+    return {
+        "top_authorities": authority_counts,
+        "top_domains": domain_counts,
+    }
 
 
 def _question_domain_score(question: str) -> float:
@@ -284,8 +305,12 @@ def answer(question: str):
     intent = r.intent
     scope = r.scope
     anchor_terms = getattr(r, "anchor_terms", None) or []
+    presentation_intent = getattr(r, "presentation_intent", None) or to_presentation_intent(
+        intent, question=question, anchor_terms=anchor_terms
+    )
 
     chunks = search_chunks(question, scope=scope, anchor_terms=anchor_terms, intent=intent)
+    retrieval_profile = _retrieval_profile(chunks)
 
     selected_passages = [c.get("text", "") for c in chunks]
     citations = [
@@ -316,6 +341,8 @@ def answer(question: str):
             overall_conf=overall_conf,
             threshold=_confidence_threshold(),
             anchor_terms=anchor_terms,
+            presentation_intent=presentation_intent,
+            retrieval_profile=retrieval_profile,
         )
 
     # Pre-answer domain gate: if query looks non-regulatory, avoid generating a fluent but off-topic answer.
@@ -333,6 +360,8 @@ def answer(question: str):
             overall_conf=overall_conf,
             threshold=_confidence_threshold(),
             anchor_terms=anchor_terms,
+            presentation_intent=presentation_intent,
+            retrieval_profile=retrieval_profile,
         )
 
     res = render_answer(
@@ -343,6 +372,7 @@ def answer(question: str):
         anchor_terms=anchor_terms,
         question=question,
         retrieval_scores=retrieval_scores,
+        presentation_intent=presentation_intent,
     )
 
     # Deterministic fallback if template returns empty text: skip headers/footers
@@ -387,6 +417,9 @@ def answer(question: str):
 
         res = replace(res, text=fallback)
 
+    if getattr(res, "presentation_intent", None) is None:
+        res = replace(res, presentation_intent=presentation_intent)
+
     # test-only shims (enabled via env var)
     res = apply_golden_shims(question, res)
 
@@ -427,8 +460,12 @@ def answer(question: str):
             overall_conf=overall_conf,
             threshold=_confidence_threshold(),
             anchor_terms=anchor_terms,
+            presentation_intent=presentation_intent,
+            retrieval_profile=retrieval_profile,
         )
     else:
+        used = [u for u in used if not (isinstance(u, dict) and u.get("kind") == "retrieval_profile")]
+        used.append({"kind": "retrieval_profile", **retrieval_profile})
         res = replace(res, used_chunks=used)
 
     return res

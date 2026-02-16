@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import re
 import logging
+
 logging.getLogger("pypdf").setLevel(logging.ERROR)
 from pathlib import Path
 from collections import Counter
 
 from pypdf import PdfReader
+
+from .metadata_rules import build_document_metadata
+from .metadata_schema import authority_from_folder, authority_from_source
 
 
 _WS_RE = re.compile(r"\s+")
@@ -168,10 +172,20 @@ def is_low_value(text: str) -> bool:
     return False
 
 
-def ingest_folder(folder: Path, source: str) -> list[dict]:
+def _resolve_authority(folder: Path, source: str | None = None, authority: str | None = None) -> str:
+    if authority:
+        return authority_from_source(authority)
+    if source:
+        return authority_from_source(source)
+    return authority_from_folder(folder.name)
+
+
+def ingest_folder(folder: Path, source: str | None = None, authority: str | None = None) -> list[dict]:
     chunks: list[dict] = []
     if not folder.exists():
         return chunks
+
+    authority_value = _resolve_authority(folder, source=source, authority=authority)
 
     for pdf_path in folder.glob("*.pdf"):
         reader = PdfReader(str(pdf_path))
@@ -186,6 +200,11 @@ def ingest_folder(folder: Path, source: str) -> list[dict]:
             seen_on_page = {_normalize_for_count(ln) for ln in lines}
             seen_on_page.discard("")
             line_df.update(seen_on_page)
+
+        sample_text = ""
+        if page_lines:
+            sample_text = "\n".join(page_lines[0][1][:80])
+        doc_meta = build_document_metadata(pdf_path.name, authority=authority_value, sample_text=sample_text)
 
         min_df = max(2, int(len(page_lines) * 0.2 + 0.999))
         repeated = {ln for ln, freq in line_df.items() if freq >= min_df}
@@ -208,11 +227,12 @@ def ingest_folder(folder: Path, source: str) -> list[dict]:
                     continue
                 chunks.append(
                     {
-                        "source": source,
+                        "source": source or authority_value,
                         "file": pdf_path.name,
                         "page": page_idx,
                         "chunk_id": f"p{page_idx}_c{i}",
                         "text": c,
+                        **doc_meta,
                     }
                 )
     return chunks
@@ -220,9 +240,34 @@ def ingest_folder(folder: Path, source: str) -> list[dict]:
 
 def build_corpus(data_dir: Path) -> list[dict]:
     corpus: list[dict] = []
-    corpus += ingest_folder(data_dir / "ich", "ICH")
-    corpus += ingest_folder(data_dir / "fda", "FDA")
-    corpus += ingest_folder(data_dir / "ema", "EMA")
-    if (data_dir / "sops").exists():
-        corpus += ingest_folder(data_dir / "sops", "SOPS")
+
+    folder_specs: list[tuple[str, str]] = [
+        ("ich", "ICH"),
+        ("fda", "FDA"),
+        ("ema", "EMA"),
+        ("eu_gmp", "EU_GMP"),
+        ("pic_s", "PIC_S"),
+        ("who", "WHO"),
+        ("sop", "SOP"),
+        ("sops", "SOP"),
+        ("other", "OTHER"),
+        ("others", "OTHER"),
+    ]
+    seen: set[Path] = set()
+    for name, authority in folder_specs:
+        folder = data_dir / name
+        if not folder.exists():
+            continue
+        seen.add(folder.resolve())
+        corpus += ingest_folder(folder, source=authority, authority=authority)
+
+    # Fallback: ingest additional subfolders not explicitly listed.
+    if data_dir.exists():
+        for child in data_dir.iterdir():
+            if not child.is_dir():
+                continue
+            cpath = child.resolve()
+            if cpath in seen:
+                continue
+            corpus += ingest_folder(child, authority=authority_from_folder(child.name))
     return corpus

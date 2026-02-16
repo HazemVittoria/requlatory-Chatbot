@@ -14,6 +14,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 from .ingestion import build_corpus
+from .metadata_schema import authority_from_source, authorities_for_scope
 from .rerank_features import RerankContext, apply_rerank_features, combine_hybrid_scores
 from .rerank_weights import get_rerank_weights
 from .semantic_reranker import LSASemanticReranker, SemanticRerankConfig
@@ -50,7 +51,7 @@ _WORD_VECT_KW = {"stop_words": "english", "ngram_range": (1, 2), "min_df": 1}
 _CHAR_VECT_KW = {"analyzer": "char_wb", "ngram_range": (3, 5), "min_df": 1}
 _SEMANTIC_CONFIG = SemanticRerankConfig()
 
-_INDEX_CACHE_VERSION = "search-index-v1"
+_INDEX_CACHE_VERSION = "search-index-v2-metadata"
 _INDEX_CACHE_FILE = Path(".cache") / "retrieval_index.pkl"
 
 _CORPUS: list[dict[str, Any]] | None = None
@@ -183,6 +184,41 @@ def _ensure_index() -> None:
         _rebuild_index(force=False)
 
 
+def resolve_authority_filter(scope: str, authority_filter: list[str] | None = None) -> set[str]:
+    if authority_filter:
+        out: set[str] = set()
+        for a in authority_filter:
+            out.add(authority_from_source(a))
+        return out
+    return authorities_for_scope(scope)
+
+
+def infer_domain_boost(query: str, intent: str | None = None, anchor_terms: list[str] | None = None) -> dict[str, float]:
+    q = f"{query or ''} {' '.join(anchor_terms or [])}".lower()
+    out: dict[str, float] = {}
+
+    def add(domain: str, weight: float) -> None:
+        out[domain] = max(out.get(domain, 0.0), weight)
+
+    if any(t in q for t in ("data integrity", "part 11", "annex 11", "audit trail", "alcoa", "electronic signature")):
+        add("DataIntegrity", 0.14)
+    if any(t in q for t in ("validation", "validated", "iq", "oq", "pq", "computerized", "computerised", "csv")):
+        add("Validation", 0.12)
+    if any(t in q for t in ("laboratory", "analytical", "oos", "oot", "out of specification", "out of trend")):
+        add("QC_Lab", 0.11)
+    if any(t in q for t in ("supplier", "vendor", "contractor")):
+        add("Suppliers", 0.12)
+    if any(t in q for t in ("inspection", "483", "inspectional", "audit")):
+        add("Inspection", 0.12)
+    if any(t in q for t in ("distribution", "transport", "storage", "cold chain")):
+        add("Distribution", 0.10)
+    if any(t in q for t in ("deviation", "capa", "quality system", "risk management", "change control")):
+        add("PQS", 0.10)
+    if intent and "procedure" in intent:
+        add("Inspection", max(out.get("Inspection", 0.0), 0.05))
+    return out
+
+
 def expand_query(query: str) -> str:
     q = (query or "").strip()
     ql = q.lower()
@@ -246,6 +282,8 @@ def search_chunks(
     top_k: int = 5,
     anchor_terms: list[str] | None = None,
     intent: str | None = None,
+    authority_filter: list[str] | None = None,
+    domain_boost: dict[str, float] | None = None,
 ) -> list[dict]:
     _ensure_index()
     assert _CORPUS is not None and _VECTORIZER is not None and _VECTORIZER_CHAR is not None and _X is not None and _X_CHAR is not None
@@ -253,6 +291,8 @@ def search_chunks(
     anchor_terms = anchor_terms or []
     weights = get_rerank_weights()
     ctx = RerankContext.from_query(query=query, intent=intent, anchor_terms=anchor_terms)
+    eff_domain_boost = domain_boost or infer_domain_boost(query, intent=intent, anchor_terms=anchor_terms)
+    allowed_authorities = resolve_authority_filter(scope, authority_filter=authority_filter)
 
     q_aug = query + (" " + " ".join(anchor_terms) if anchor_terms else "")
     q2 = expand_query(q_aug)
@@ -278,6 +318,10 @@ def search_chunks(
         weights=weights,
     )
     boosted = apply_rerank_features(base_scores=base_scores, corpus=_CORPUS, ctx=ctx, weights=weights)
+    if eff_domain_boost:
+        for i, c in enumerate(_CORPUS):
+            d = str(c.get("domain") or "Other")
+            boosted[i] += float(eff_domain_boost.get(d, 0.0))
 
     # Optional second-stage semantic rerank (A/B via env flag).
     if _ENABLE_SEMANTIC_RERANK and _SEMANTIC_RERANKER is not None and len(boosted) > 0:
@@ -292,6 +336,8 @@ def search_chunks(
         print(f"Query: {query}")
         print(f"Intent: {intent}")
         print(f"Scope: {scope}")
+        print(f"Authority filter: {sorted(allowed_authorities)}")
+        print(f"Domain boost: {eff_domain_boost}")
         print(f"Anchor terms: {anchor_terms}")
         print(
             "Semantic rerank: "
@@ -312,9 +358,9 @@ def search_chunks(
     out: list[dict] = []
     for ix in idx_all:
         c = dict(_CORPUS[int(ix)])
-        src = c.get("source") or c.get("scope")
-
-        if scope != "MIXED" and src != scope:
+        authority = str(c.get("authority") or c.get("source") or "OTHER")
+        authority = authority_from_source(authority)
+        if allowed_authorities and authority not in allowed_authorities:
             continue
 
         c["_score"] = float(boosted[int(ix)])
