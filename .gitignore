@@ -1,6 +1,11 @@
 __pycache__/
 .pytest_cache/
 *.pyc
+.cache/
+logs/*
+!logs/reports/
+logs/reports/*
+!logs/reports/day_*.json
 .env
 .env.*
 .DS_Store
